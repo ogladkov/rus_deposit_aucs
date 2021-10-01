@@ -170,10 +170,86 @@ def comfinspb_parse(thresh_date):
             all_tables.append([auc_date, terms, fact_value, min_rate, max_rate, cutoff_rate])
     driver.close()
     df = make_df(all_tables)
-    df.to_excel('aucs.xlsx', index=None, sheet_name='comfin')
+
+    return df
+
+
+def pfr_parse():
+    def make_df(all_tables):
+        # makes pd
+        df = pd.DataFrame(all_tables,
+                          columns=['Дата', 'Объём, млн', 'Дата поставки', 'Дата возврата',
+                                   'Минимиальная ставка', 'Максимальная ставка', 'Ставка отсечения',
+                                   'Площадка', 'Вид средств'
+                                   ])
+
+        for x in ['Дата', 'Дата поставки', 'Дата возврата']:
+            df[x] = df[x].apply(rusmonth2num)
+
+        for x in ['Объём, млн', 'Минимиальная ставка', 'Максимальная ставка', 'Ставка отсечения']:
+            df[x] = df[x].apply(process_nums).str[0]
+
+        return df
+
+    pfr_domain_url = 'https://pfr.gov.ru'
+    pfr_arch_url = 'https://pfr.gov.ru/grazhdanam/pensions/pens_nak/bank_depozit/~630'
+
+    keywords = {
+        'Дата отбора': ['дата', 'отбора'],
+        'Объём, млн': ['размер', 'средств'],
+        'Дата поставки': ['дата', 'размещения'],
+        'Дата возврата': ['дата', 'возврата'],
+        'Минимиальная ставка': ['минимальная', 'ставка', 'заявках'],
+        'Максимальная ставка': ['максимальная', 'ставка', 'заявках'],
+        'Ставка отсечения': ['отсечения', 'ставка'],
+        'Площадка': ['место', 'проведения']
+    }
+
+    sess = requests.session()
+    r = sess.get(pfr_arch_url).text
+    soup = bs4.BeautifulSoup(r)
+
+    all_tables = []  # init list with data
+
+    for p in soup.find_all('p'):
+        if p.a:
+            if 'doc' in p.a.get('href'):
+                doc_url = pfr_domain_url + p.a.get('href')
+                doc_url = pfr_domain_url + p.a['href']
+                #             print(doc_url)
+                subprocess.call(['soffice', '--headless', '--convert-to', 'docx', doc_url])
+                fname = doc_url.split('/')[-1]
+                print(fname)
+                document = docx.Document(fname + 'x')
+                t = document.tables[0]
+                local_table_data = []
+
+                for k, v in keywords.items():
+                    for row_index in range(len(t.rows)):
+                        head = t.row_cells(row_index)[0].text.split()
+                        head = [h.lower() for h in head]
+                        head = [re.search('[а-я]*', h).group() for h in head]
+
+                        if len(set(head).union(set(v))) == len(set(head)):
+                            data = t.row_cells(row_index)[1].text
+                            local_table_data.append(data)
+
+                for row_index in range(len(t.rows)):
+                    if 'резерва ПФР' in t.row_cells(row_index)[0].text:
+                        local_table_data.append('Резерв ПФР')
+                        break
+                    elif 'страховых взносов' in t.row_cells(row_index)[0].text:
+                        local_table_data.append('Страховые взносы')
+                        break
+
+                all_tables.append(local_table_data)
+                os.remove(fname + 'x')
+    df = make_df(all_tables)
+
     return df
 
 
 # main
 if __name__ == __main__:
     df_comfinspb = comfinspb_parse('1.01.2021')
+    df_pfr = pfr_parse()
